@@ -1,0 +1,561 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>CPU Scheduler Simulator</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <h1>CPU Scheduler Simulator</h1>
+    <div class="container">
+        <div class="panel">
+            <h2>Process Management</h2>
+            <div class="input-group">
+                <input type="text" id="pid" placeholder="Process ID (e.g., P1)">
+                <input type="number" id="arrival" placeholder="Arrival Time" min="0">
+                <input type="number" id="burst" placeholder="Burst Time" min="1">
+                <input type="number" id="priority" placeholder="Priority" min="0">
+                <button onclick="addProcess()">Add Process</button>
+                <button onclick="generateRandom()">Generate Random</button>
+            </div>
+            
+            <div id="processTable"></div>
+        </div>
+
+        <div class="panel">
+            <h2>Simulation</h2>
+            <div>
+                <select id="algorithm" onchange="algorithmChanged()">
+                    <option value="fcfs">First Come First Serve (FCFS)</option>
+                    <option value="sjf">Shortest Job First (SJF)</option>
+                    <option value="sjf_preemptive">Shortest Job First (Preemptive)</option>
+                    <option value="priority_preemptive">Priority (Preemptive)</option>
+                    <option value="rr">Round Robin</option>
+                    <option value="auto">AI Optimized</option>
+                </select>
+                
+                <div id="timeQuantumDiv" style="display: none;">
+                    <input type="number" id="quantum" value="2" min="1" placeholder="Time Quantum">
+                </div>
+
+                <div id="selectedAlgorithm"></div>
+                
+                <button onclick="runSimulation()">Run Simulation</button>
+            </div>
+
+            <div class="gantt-container">
+                <div class="gantt-title">Gantt Chart</div>
+                <div id="ganttChart"></div>
+            </div>
+
+            <div class="metrics">
+                <div class="metric">
+                    <span>Average Waiting Time:</span>
+                    <span id="avgWaitingTime">-</span>
+                </div>
+                <div class="metric">
+                    <span>Average Turnaround Time:</span>
+                    <span id="avgTurnaroundTime">-</span>
+                </div>
+                <div class="metric">
+                    <span>Average Response Time:</span>
+                    <span id="avgResponseTime">-</span>
+                </div>
+                <div class="metric">
+                    <span>CPU Utilization:</span>
+                    <span id="cpuUtilization">-</span>
+                </div>
+            </div>
+
+            <div id="resultsTable"></div>
+        </div>
+    </div>
+
+    <script>
+        let processes = [];
+        let timeline = [];
+
+        function addProcess() {
+            const pid = document.getElementById('pid').value;
+            const arrival = parseInt(document.getElementById('arrival').value);
+            const burst = parseInt(document.getElementById('burst').value);
+            const priority = parseInt(document.getElementById('priority').value) || 0;
+
+            if (!pid || isNaN(arrival) || isNaN(burst)) {
+                alert('Please fill all fields correctly');
+                return;
+            }
+
+            if (processes.some(p => p.pid === pid)) {
+                alert('Process ID must be unique');
+                return;
+            }
+
+            processes.push({
+                pid,
+                arrival,
+                burst,
+                priority,
+                remaining: burst
+            });
+
+            updateProcessTable();
+            clearInputs();
+        }
+
+        function clearInputs() {
+            document.getElementById('pid').value = '';
+            document.getElementById('arrival').value = '';
+            document.getElementById('burst').value = '';
+            document.getElementById('priority').value = '';
+        }
+
+        function generateRandom() {
+            const count = Math.floor(Math.random() * 3) + 3; // 3-5 processes
+            processes = [];
+
+            for (let i = 0; i < count; i++) {
+                processes.push({
+                    pid: `P${i + 1}`,
+                    arrival: Math.floor(Math.random() * 5),
+                    burst: Math.floor(Math.random() * 8) + 1,
+                    priority: Math.floor(Math.random() * 5),
+                    remaining: 0
+                });
+            }
+
+            updateProcessTable();
+        }
+
+        function updateProcessTable() {
+            const table = document.createElement('table');
+            table.className = 'results-table';
+            
+            const header = table.createTHead();
+            const headerRow = header.insertRow();
+            ['Process', 'Arrival Time', 'Burst Time', 'Priority', 'Action']
+                .forEach(text => {
+                    const th = document.createElement('th');
+                    th.textContent = text;
+                    headerRow.appendChild(th);
+                });
+
+            const tbody = table.createTBody();
+            processes.forEach((process, index) => {
+                const row = tbody.insertRow();
+                [process.pid, process.arrival, process.burst, process.priority]
+                    .forEach(value => {
+                        const cell = row.insertCell();
+                        cell.textContent = value;
+                    });
+                
+                const actionCell = row.insertCell();
+                const deleteButton = document.createElement('button');
+                deleteButton.textContent = 'Delete';
+                deleteButton.onclick = () => {
+                    processes.splice(index, 1);
+                    updateProcessTable();
+                };
+                actionCell.appendChild(deleteButton);
+            });
+
+            const processTable = document.getElementById('processTable');
+            processTable.innerHTML = '';
+            processTable.appendChild(table);
+        }
+
+        function algorithmChanged() {
+            const algorithm = document.getElementById('algorithm').value;
+            const timeQuantumDiv = document.getElementById('timeQuantumDiv');
+            const selectedAlgorithm = document.getElementById('selectedAlgorithm');
+            
+            timeQuantumDiv.style.display = algorithm === 'rr' ? 'block' : 'none';
+            selectedAlgorithm.style.display = 'none';
+        }
+
+        function runSimulation() {
+            if (processes.length === 0) {
+                alert('Please add at least one process');
+                return;
+            }
+
+            const algorithm = document.getElementById('algorithm').value;
+            const quantum = parseInt(document.getElementById('quantum').value);
+
+            // Reset processes
+            processes.forEach(p => {
+                p.remaining = p.burst;
+                p.completionTime = 0;
+                p.turnaroundTime = 0;
+                p.waitingTime = 0;
+                p.responseTime = -1;
+            });
+            timeline = [];
+
+            // Run appropriate algorithm
+            switch(algorithm) {
+                case 'fcfs':
+                    simulateFCFS();
+                    break;
+                case 'sjf':
+                    simulateSJF(false);
+                    break;
+                case 'sjf_preemptive':
+                    simulateSJF(true);
+                    break;
+                case 'priority_preemptive':
+                    simulatePriority(true);
+                    break;
+                case 'rr':
+                    simulateRR(quantum);
+                    break;
+                case 'auto':
+                    selectBestAlgorithm();
+                    break;
+            }
+
+            updateGanttChart();
+            calculateMetrics();
+            updateResultsTable();
+        }
+
+        function simulateFCFS() {
+            const sorted = [...processes].sort((a, b) => a.arrival - b.arrival);
+            let currentTime = 0;
+
+            sorted.forEach(process => {
+                if (currentTime < process.arrival) {
+                    currentTime = process.arrival;
+                }
+                
+                timeline.push({
+                    pid: process.pid,
+                    start: currentTime,
+                    end: currentTime + process.burst
+                });
+                
+                currentTime += process.burst;
+            });
+        }
+
+        function simulateSJF(preemptive) {
+            let currentTime = 0;
+            let completed = 0;
+            let currentProcess = null;
+            const processQueue = [...processes];
+
+            while (completed < processes.length) {
+                const available = processQueue
+                    .filter(p => p.remaining > 0 && p.arrival <= currentTime)
+                    .sort((a, b) => a.remaining - b.remaining);
+
+                if (available.length === 0) {
+                    currentTime++;
+                    continue;
+                }
+
+                if (!preemptive && currentProcess && currentProcess.remaining > 0) {
+                    // Continue with current process
+                    timeline.push({
+                        pid: currentProcess.pid,
+                        start: currentTime,
+                        end: currentTime + 1
+                    });
+                    currentProcess.remaining--;
+                    if (currentProcess.remaining === 0) {
+                        completed++;
+                        currentProcess = null;
+                    }
+                } else {
+                    // Start new process or preempt
+                    currentProcess = available[0];
+                    timeline.push({
+                        pid: currentProcess.pid,
+                        start: currentTime,
+                        end: currentTime + 1
+                    });
+                    currentProcess.remaining--;
+                    if (currentProcess.remaining === 0) {
+                        completed++;
+                        currentProcess = null;
+                    }
+                }
+                currentTime++;
+            }
+        }
+
+        function simulatePriority(preemptive) {
+            let currentTime = 0;
+            let completed = 0;
+            let currentProcess = null;
+            const processQueue = [...processes];
+
+            while (completed < processes.length) {
+                const available = processQueue
+                    .filter(p => p.remaining > 0 && p.arrival <= currentTime)
+                    .sort((a, b) => b.priority - a.priority); // Higher priority first
+
+                if (available.length === 0) {
+                    currentTime++;
+                    continue;
+                }
+
+                if (!preemptive && currentProcess && currentProcess.remaining > 0) {
+                    // Continue with current process
+                    timeline.push({
+                        pid: currentProcess.pid,
+                        start: currentTime,
+                        end: currentTime + 1
+                    });
+                    currentProcess.remaining--;
+                    if (currentProcess.remaining === 0) {
+                        completed++;
+                        currentProcess = null;
+                    }
+                } else {
+                    // Start new process or preempt
+                    currentProcess = available[0];
+                    timeline.push({
+                        pid: currentProcess.pid,
+                        start: currentTime,
+                        end: currentTime + 1
+                    });
+                    currentProcess.remaining--;
+                    if (currentProcess.remaining === 0) {
+                        completed++;
+                        currentProcess = null;
+                    }
+                }
+                currentTime++;
+            }
+        }
+
+        function simulateRR(quantum) {
+            let currentTime = 0;
+            let completed = 0;
+            const processQueue = [...processes];
+            
+            while (completed < processes.length) {
+                const available = processQueue
+                    .filter(p => p.remaining > 0 && p.arrival <= currentTime);
+
+                if (available.length === 0) {
+                    currentTime++;
+                    continue;
+                }
+
+                const process = available[0];
+                const executeTime = Math.min(quantum, process.remaining);
+
+                timeline.push({
+                    pid: process.pid,
+                    start: currentTime,
+                    end: currentTime + executeTime
+                });
+
+                process.remaining -= executeTime;
+                currentTime += executeTime;
+
+                if (process.remaining > 0) {
+                    const proc = processQueue.shift();
+                    processQueue.push(proc);
+                } else {
+                    completed++;
+                    processQueue.shift();
+                }
+            }
+        }
+
+        function selectBestAlgorithm() {
+            const avgBurst = processes.reduce((sum, p) => sum + p.burst, 0) / processes.length;
+            const burstVariance = processes.reduce((sum, p) => sum + Math.pow(p.burst - avgBurst, 2), 0) / processes.length;
+            const hasPriorities = processes.some(p => p.priority > 0);
+            const arrivalSpread = Math.max(...processes.map(p => p.arrival)) - Math.min(...processes.map(p => p.arrival));
+
+            let selectedAlgorithm = '';
+            let reason = '';
+
+            if (arrivalSpread === 0) {
+                if (hasPriorities) {
+                    selectedAlgorithm = 'Priority (Preemptive)';
+                    reason = 'Processes arrive simultaneously and have different priorities';
+                    simulatePriority(true);
+                } else if (burstVariance > 10) {
+                    selectedAlgorithm = 'SJF (Preemptive)';
+                    reason = 'High variance in burst times suggests shorter jobs should be prioritized';
+                    simulateSJF(true);
+                } else {
+                    selectedAlgorithm = 'Round Robin';
+                    reason = 'Similar burst times and simultaneous arrival make Round Robin ideal for fairness';
+                    simulateRR(2);
+                }
+            } else if (burstVariance > 20) {
+                selectedAlgorithm = 'SJF (Preemptive)';
+                reason = 'Very high burst time variance makes SJF optimal';
+                simulateSJF(true);
+            } else if (hasPriorities && arrivalSpread < 10) {
+                selectedAlgorithm = 'Priority (Preemptive)';
+                reason = 'Processes have priorities and arrive within a short window';
+                simulatePriority(true);
+            } else {
+                selectedAlgorithm = 'Round Robin';
+                reason = 'Mixed characteristics suggest Round Robin for best overall performance';
+                simulateRR(2);
+            }
+
+            // Display selected algorithm and reason
+            const selectedAlgorithmDiv = document.getElementById('selectedAlgorithm');
+            selectedAlgorithmDiv.innerHTML = `AI Selected: ${selectedAlgorithm}<br>Reason: ${reason}`;
+            selectedAlgorithmDiv.style.display = 'block';
+        }
+
+        function updateGanttChart() {
+            const chart = document.getElementById('ganttChart');
+            const width = 800; // Fixed width
+            const height = 150; // Fixed height accounting for padding
+            
+            // Handle empty timeline
+            if (timeline.length === 0) {
+                chart.innerHTML = `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"></svg>`;
+                return;
+            }
+
+            const endTime = Math.max(...timeline.map(t => t.end));
+            
+            const colors = {
+                'P1': '#4CAF50',
+                'P2': '#2196F3',
+                'P3': '#FFC107',
+                'P4': '#9C27B0',
+                'P5': '#F44336'
+            };
+
+            let svg = `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" preserveAspectRatio="xMidYMid meet">`;
+        
+            // Draw horizontal axis line
+            svg += `<line x1="0" y1="100" x2="${width}" y2="100" stroke="#666" stroke-width="2"/>`;
+        
+            // Draw time markers first (behind the blocks)
+            for (let t = 0; t <= endTime; t++) {
+                const x = (t / endTime) * width;
+                // Draw vertical grid line
+                svg += `<line x1="${x}" y1="20" x2="${x}" y2="100" stroke="#e5e5e5" stroke-width="1"/>`;
+                // Draw tick mark
+                svg += `<line x1="${x}" y1="95" x2="${x}" y2="105" stroke="#666" stroke-width="2"/>`;
+                // Draw time label
+                svg += `<text x="${x}" y="125" text-anchor="middle" fill="#666" font-size="12" font-weight="bold">${t}</text>`;
+            }
+        
+            // Draw process blocks
+            timeline.forEach(t => {
+                const x = (t.start / endTime) * width;
+                const w = ((t.end - t.start) / endTime) * width;
+                const color = colors[t.pid] || '#1f77b4';
+            
+                svg += `
+                    <g>
+                        <rect x="${x}" y="20" width="${w}" height="80" 
+                              fill="${color}" stroke="white" rx="4"/>
+                        <text x="${x + w/2}" y="65" 
+                              text-anchor="middle" fill="white" font-weight="bold">${t.pid}</text>
+                    </g>
+                `;
+            });
+
+            svg += '</svg>';
+            chart.innerHTML = svg;
+        }
+
+        function calculateMetrics() {
+            const metrics = {
+                waiting: 0,
+                turnaround: 0,
+                response: 0
+            };
+
+            processes.forEach(process => {
+                const processTimeline = timeline.filter(t => t.pid === process.pid);
+                const start = Math.min(...processTimeline.map(t => t.start));
+                const end = Math.max(...processTimeline.map(t => t.end));
+                
+                metrics.waiting += start - process.arrival;
+                metrics.turnaround += end - process.arrival;
+                metrics.response += start - process.arrival;
+            });
+
+            const n = processes.length;
+            document.getElementById('avgWaitingTime').textContent = 
+                (metrics.waiting / n).toFixed(2);
+            document.getElementById('avgTurnaroundTime').textContent = 
+                (metrics.turnaround / n).toFixed(2);
+            document.getElementById('avgResponseTime').textContent = 
+                (metrics.response / n).toFixed(2);
+
+            const totalTime = Math.max(...timeline.map(t => t.end));
+            const idleTime = totalTime - timeline.reduce((sum, t) => sum + (t.end - t.start), 0);
+            const utilization = ((totalTime - idleTime) / totalTime * 100).toFixed(2);
+            document.getElementById('cpuUtilization').textContent = utilization + '%';
+        }
+
+        function updateResultsTable() {
+            // Calculate metrics for each process
+            processes.forEach(process => {
+                const lastExecution = [...timeline]
+                    .reverse()
+                    .find(t => t.pid === process.pid);
+            
+                if (lastExecution) {
+                    process.completionTime = lastExecution.end;
+                    process.turnaroundTime = process.completionTime - process.arrival;
+                    process.waitingTime = process.turnaroundTime - process.burst;
+                
+                    const firstExecution = timeline.find(t => t.pid === process.pid);
+                    process.responseTime = firstExecution.start - process.arrival;
+                }
+            });
+
+            // Sort processes by PID
+            const sortedProcesses = [...processes].sort((a, b) => 
+                a.pid.localeCompare(b.pid, undefined, {numeric: true}));
+
+            // Create table HTML
+            const table = document.createElement('table');
+            table.className = 'results-table';
+        
+            // Add header
+            const header = table.createTHead();
+            const headerRow = header.insertRow();
+            ['Process', 'Arrival Time', 'Burst Time', 'Completion Time', 
+             'Turnaround Time', 'Waiting Time', 'Response Time']
+            .forEach(text => {
+                const th = document.createElement('th');
+                th.textContent = text;
+                headerRow.appendChild(th);
+            });
+
+            // Add body
+            const tbody = table.createTBody();
+            sortedProcesses.forEach(process => {
+                const row = tbody.insertRow();
+                [
+                    process.pid,
+                    process.arrival,
+                    process.burst,
+                    process.completionTime,
+                    process.turnaroundTime,
+                    process.waitingTime,
+                    process.responseTime
+                ].forEach(value => {
+                    const cell = row.insertCell();
+                    cell.textContent = typeof value === 'number' ? 
+                        value.toFixed(2) : value;
+                });
+            });
+
+            // Replace existing table
+            const resultsTable = document.getElementById('resultsTable');
+            resultsTable.innerHTML = '';
+            resultsTable.appendChild(table);
+        }
+    </script>
+</body>
+</html>
